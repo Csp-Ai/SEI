@@ -9,7 +9,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     }
     const pdf = await generateRoiReport(data);
-    return new NextResponse(pdf, {
+    const body = Buffer.from(pdf) as unknown as BodyInit;
+
+    return new NextResponse(body, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',

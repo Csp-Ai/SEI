@@ -1,39 +1,35 @@
-export async function filterAllowedUrls(
-  baseUrl: string,
-  urls: string[],
-  fetchFn: typeof fetch = fetch
-): Promise<string[]> {
+export interface RobotsRules {
+  allow: string[];
+  disallow: string[];
+}
+
+function parseDisallow(content: string): string[] {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith('#'))
+    .flatMap((line) => {
+      const [directive, value = ''] = line.split(':', 2).map((s) => s.trim());
+      return directive.toLowerCase() === 'disallow' && value ? [value] : [];
+    });
+}
+
+export async function filterAllowedUrls(baseUrl: string, urls: string[], fetchFn: typeof fetch = fetch): Promise<string[]> {
   let disallow: string[] = [];
   try {
     const res = await fetchFn(new URL('/robots.txt', baseUrl));
     if ((res as any)?.ok) {
-      const content = await (res as any).text();
-      disallow = parseDisallow(content);
+      disallow = parseDisallow(await (res as any).text());
     }
   } catch {
-    // ignore errors fetching robots
+    // ignore fetch errors
   }
-  return urls.filter((u) => {
-    const path = new URL(u).pathname;
-    return !disallow.some((rule) => rule !== '' && path.startsWith(rule));
-  });
-}
 
-function parseDisallow(content: string): string[] {
-  const lines = content.split(/\r?\n/);
-  const rules: string[] = [];
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#')) continue;
-    const [directive, value = ''] = line.split(':', 2).map((s) => s.trim());
-    if (directive.toLowerCase() === 'disallow' && value) {
-      rules.push(value);
-    }
-  }
-  return rules;
-export interface RobotsRules {
-  allow: string[];
-  disallow: string[];
+  return urls.filter((url) => {
+    const path = new URL(url).pathname;
+    return !disallow.some((rule) => path.startsWith(rule));
+  });
 }
 
 async function fetchRobots(origin: string): Promise<RobotsRules> {
@@ -41,23 +37,18 @@ async function fetchRobots(origin: string): Promise<RobotsRules> {
     const res = await fetch(new URL('/robots.txt', origin));
     if (!res.ok) return { allow: [], disallow: [] };
     const text = await res.text();
-    const lines = text.split(/\r?\n/);
     const rules: RobotsRules = { allow: [], disallow: [] };
     let applies = false;
-    for (const raw of lines) {
+    for (const raw of text.split(/\r?\n/)) {
       const line = raw.trim();
       if (!line || line.startsWith('#')) continue;
       const [directive, valueRaw] = line.split(':', 2);
       if (!directive || valueRaw === undefined) continue;
       const value = valueRaw.trim();
       const d = directive.toLowerCase();
-      if (d === 'user-agent') {
-        applies = value === '*';
-      } else if (applies && d === 'disallow') {
-        if (value) rules.disallow.push(value);
-      } else if (applies && d === 'allow') {
-        if (value) rules.allow.push(value);
-      }
+      if (d === 'user-agent') applies = value === '*';
+      else if (applies && d === 'disallow' && value) rules.disallow.push(value);
+      else if (applies && d === 'allow' && value) rules.allow.push(value);
     }
     return rules;
   } catch {
@@ -68,42 +59,30 @@ async function fetchRobots(origin: string): Promise<RobotsRules> {
 function pathAllowed(path: string, rules: RobotsRules): boolean {
   for (const dis of rules.disallow) {
     if (dis && path.startsWith(dis)) {
-      for (const allow of rules.allow) {
-        if (path.startsWith(allow)) return true;
-      }
+      for (const allow of rules.allow) if (path.startsWith(allow)) return true;
       return false;
     }
   }
   return true;
 }
 
-/**
- * Fetches a URL if allowed by robots.txt. Returns null when disallowed.
- */
-export async function fetchIfAllowed(
-  url: string,
-  init?: RequestInit,
-  cache = new Map<string, RobotsRules>()
-): Promise<Response | null> {
-  const u = new URL(url);
-  let rules = cache.get(u.origin);
+export async function fetchIfAllowed(url: string, init?: RequestInit, cache = new Map<string, RobotsRules>()) {
+  const parsed = new URL(url);
+  let rules = cache.get(parsed.origin);
   if (!rules) {
-    rules = await fetchRobots(u.origin);
-    cache.set(u.origin, rules);
+    rules = await fetchRobots(parsed.origin);
+    cache.set(parsed.origin, rules);
   }
-  if (!pathAllowed(u.pathname, rules)) return null;
+  if (!pathAllowed(parsed.pathname, rules)) return null;
   return fetch(url, init);
 }
 
-export async function isAllowed(
-  url: string,
-  cache = new Map<string, RobotsRules>()
-) {
-  const u = new URL(url);
-  let rules = cache.get(u.origin);
+export async function isAllowed(url: string, cache = new Map<string, RobotsRules>()) {
+  const parsed = new URL(url);
+  let rules = cache.get(parsed.origin);
   if (!rules) {
-    rules = await fetchRobots(u.origin);
-    cache.set(u.origin, rules);
+    rules = await fetchRobots(parsed.origin);
+    cache.set(parsed.origin, rules);
   }
-  return pathAllowed(u.pathname, rules);
+  return pathAllowed(parsed.pathname, rules);
 }
