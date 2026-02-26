@@ -10,10 +10,8 @@ export interface AuditEntry {
 
 function getDepth(value: any, depth = 0): number {
   if (value && typeof value === 'object') {
-    return Object.values(value).reduce(
-      (max, v) => Math.max(max, getDepth(v, depth + 1)),
-      depth + 1
-    );
+    const values = Object.values(value as Record<string, unknown>);
+    return values.reduce<number>((max, v) => Math.max(max, getDepth(v, depth + 1)), depth + 1);
   }
   return depth;
 }
